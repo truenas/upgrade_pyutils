@@ -1,0 +1,28 @@
+Source: truenas-initrd
+Section: admin
+Priority: optional
+Maintainer: TrueNAS Engineering <dev@truenas.com>
+Build-Depends: debhelper-compat (= 12)
+Standards-Version: 4.4.1
+Homepage: https://github.com/truenas/upgrade_pyutils
+
+Package: truenas-initrd
+Architecture: all
+Depends:
+ ${misc:Depends},
+ python3 (>= 3.10),
+ initramfs-tools,
+ zfsutils-linux
+Replaces: truenas-files
+Breaks: truenas-files (<< 999)
+Description: TrueNAS initramfs regeneration script
+ Reconciles boot-environment configuration files with the TrueNAS
+ configuration database and regenerates the initramfs for each
+ kernel installed in the target boot environment.
+ .
+ The script and its sibling stdlib-only `upgrade_pyutils` helper
+ package are installed under /usr/libexec/truenas-initrd/. The
+ package deliberately ships no Python module under site-packages
+ because the script is invoked across boot-environment boundaries
+ during install and upgrade, where loading code from the host BE's
+ site-packages would risk Python ABI / kernel-feature mismatches.

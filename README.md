@@ -71,15 +71,11 @@ tests/
 
 ## How `upgrade_pyutils` is loaded
 
-`truenas-initrd.py` prepends its own directory to `sys.path` before importing,
-using `os.path.realpath(__file__)` so any future symlink resolves back to the
-real install dir. There is no dependency on the host BE's `dist-packages`.
-
-```python
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from upgrade_pyutils.io import atomic_write
-# ...etc
-```
+When Python runs a script by path, it automatically prepends the script's own
+directory to `sys.path[0]`. That makes `from upgrade_pyutils.io import
+atomic_write` resolve to the package that ships next to `truenas-initrd.py`,
+with no `sys.path` manipulation in the script itself and no dependency on the
+host BE's `dist-packages`.
 
 ## What the script does
 
