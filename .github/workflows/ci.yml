@@ -41,10 +41,13 @@ jobs:
       - name: Stdlib-only smoke import (-I isolates from site-packages)
         run: |
           python -I -c "
+          import importlib
+          import importlib.util
           import sys
           sys.path.insert(0, 'src')
-          import upgrade_pyutils.io, upgrade_pyutils.rootfs, upgrade_pyutils.db, upgrade_pyutils.gpu
-          print('imports OK on Python', sys.version)
+          spec = importlib.util.spec_from_file_location('truenas_initrd', 'src/truenas-initrd.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
           "
 
   unit-tests:
