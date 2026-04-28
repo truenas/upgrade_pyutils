@@ -11,8 +11,7 @@ Architecture: all
 Depends:
  ${misc:Depends},
  python3 (>= 3.10),
- initramfs-tools,
- zfsutils-linux
+ initramfs-tools
 Replaces: truenas-files
 Breaks: truenas-files (<< 999)
 Description: TrueNAS initramfs regeneration script
