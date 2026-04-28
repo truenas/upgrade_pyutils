@@ -115,10 +115,10 @@ jobs:
           forbid '^l'   # no symlinks
           echo "Install layout OK"
       - name: Smoke-install on the runner
-        # `--force-depends` because the runner doesn't have initramfs-tools
-        # or zfsutils-linux; we're not exercising those, just confirming the
-        # script runs end-to-end from its installed path and resolves the
-        # sibling upgrade_pyutils package without any sys.path tricks.
+        # `--force-depends` because the runner doesn't have initramfs-tools;
+        # we're not exercising it, just confirming the script runs end-to-end
+        # from its installed path and resolves the sibling upgrade_pyutils
+        # package without any sys.path tricks.
         run: |
           sudo dpkg -i --force-depends truenas-initrd_*.deb
           /usr/local/bin/truenas-initrd.py --help | head -1
