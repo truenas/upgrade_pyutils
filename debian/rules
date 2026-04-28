@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# dh_fixperms keeps the execute bit on everything under /usr/local/bin/ since
+# that's a bin directory. Only the entry-point script should be executable;
+# the helper modules under upgrade_pyutils/ are imports-only.
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0644 debian/truenas-initrd/usr/local/bin/upgrade_pyutils/*.py
+
+# dh_usrlocal refuses to ship files under /usr/local/ (it's meant to enforce
+# local-admin-only ownership of that tree). truenas-files takes the same
+# override; we follow suit because old middleware versions hardcode
+# /usr/local/bin/truenas-initrd.py as the script's invocation path.
+override_dh_usrlocal:

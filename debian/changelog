@@ -1,0 +1,7 @@
+truenas-initrd (0.1.0-1) unstable; urgency=medium
+
+  * Initial release. truenas-initrd.py and the stdlib-only upgrade_pyutils
+    helper package, packaged together for installation under
+    /usr/libexec/truenas-initrd/.
+
+ -- TrueNAS Engineering <dev@truenas.com>  Mon, 27 Apr 2026 00:00:00 +0000

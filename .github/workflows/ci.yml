@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install ruff and mypy
+        run: pip install ruff mypy
+      - name: Ruff
+        run: ruff check src/ tests/
+      - name: Mypy
+        run: mypy --config-file mypy.ini
+
+  compile-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile sources
+        run: python -m compileall -q src/
+      - name: Stdlib-only smoke import (-I isolates from site-packages)
+        run: |
+          python -I -c "
+          import sys
+          sys.path.insert(0, 'src')
+          import upgrade_pyutils.io, upgrade_pyutils.rootfs, upgrade_pyutils.db, upgrade_pyutils.gpu
+          print('imports OK on Python', sys.version)
+          "
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run unit tests as root
+        # `atomic_write` defaults uid=gid=0; that fchown call needs root, so
+        # pytest runs under sudo. `sudo` strips PATH (secure_path) so we
+        # re-inject the runner's PATH and use `python -m pytest` to avoid
+        # depending on the pytest console script being on it.
+        run: sudo env "PATH=$PATH" python -m pytest tests/ -m "not integration"
+
+  package-build:
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper dpkg-dev fakeroot
+      - name: Build .deb
+        run: dpkg-buildpackage -us -uc -b
+      - name: Move artifact into workspace
+        run: mv ../truenas-initrd_*.deb ./
+      - name: Inspect package contents
+        run: dpkg-deb -c truenas-initrd_*.deb
+      - name: Validate install layout
+        # Asserts the package ships exactly the paths/modes we expect:
+        # the script as 0755 at /usr/local/bin/truenas-initrd.py, the helper
+        # modules as 0644 under /usr/local/bin/upgrade_pyutils/, and nothing
+        # under /usr/libexec/ or as a symlink (we deliberately don't ship one).
+        run: |
+          set -eu
+          DEB=$(echo truenas-initrd_*.deb)
+          listing=$(dpkg-deb -c "$DEB")
+
+          require() {
+            echo "$listing" | grep -qE "$1" || {
+              echo "FAIL: missing expected entry matching: $1"
+              echo "$listing"
+              exit 1
+            }
+          }
+          forbid() {
+            if echo "$listing" | grep -qE "$1"; then
+              echo "FAIL: unexpected entry matching: $1"
+              echo "$listing"
+              exit 1
+            fi
+          }
+
+          require '^-rwxr-xr-x .*\./usr/local/bin/truenas-initrd\.py$'
+          for mod in __init__ db gpu io rootfs; do
+            require "^-rw-r--r-- .*\./usr/local/bin/upgrade_pyutils/${mod}\.py$"
+          done
+          forbid '/usr/libexec/'
+          forbid '^l'   # no symlinks
+          echo "Install layout OK"
+      - name: Smoke-install on the runner
+        # `--force-depends` because the runner doesn't have initramfs-tools
+        # or zfsutils-linux; we're not exercising those, just confirming the
+        # script runs end-to-end from its installed path and resolves the
+        # sibling upgrade_pyutils package without any sys.path tricks.
+        run: |
+          sudo dpkg -i --force-depends truenas-initrd_*.deb
+          /usr/local/bin/truenas-initrd.py --help | head -1
+          sudo dpkg --purge truenas-initrd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: truenas-initrd-deb
+          path: truenas-initrd_*.deb
+
+  integration-tests:
+    name: integration tests in Debian Trixie KVM VM
+    runs-on: ubuntu-24.04
+    needs: [lint-and-typecheck, compile-matrix, unit-tests, package-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: truenas-initrd-deb
+          path: .
+
+      - name: Setup QEMU on the runner
+        timeout-minutes: 10
+        run: bash .github/workflows/scripts/qemu-1-setup.sh
+
+      - name: Start Ubuntu 24.04 VM
+        timeout-minutes: 10
+        run: bash .github/workflows/scripts/qemu-2-start.sh
+
+      - name: Install .deb and run integration tests in VM
+        timeout-minutes: 20
+        run: bash .github/workflows/scripts/qemu-3-test.sh
+
+      - name: Collect logs
+        if: always()
+        timeout-minutes: 5
+        run: bash .github/workflows/scripts/qemu-4-collect-logs.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vm-test-logs
+          path: /tmp/qemu-logs.tar.gz
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: always()
+        run: bash .github/workflows/scripts/qemu-5-summary.sh
