@@ -10,3 +10,11 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Debian build artifacts (left in-tree by dpkg-buildpackage)
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper.log
+debian/*.substvars
+debian/truenas-initrd/
