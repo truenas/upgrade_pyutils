@@ -111,7 +111,7 @@ jobs:
           }
 
           require '^-rwxr-xr-x .*\./usr/local/bin/truenas-initrd\.py$'
-          for mod in __init__ db gpu io rootfs; do
+          for mod in __init__ db io rootfs; do
             require "^-rw-r--r-- .*\./usr/local/bin/upgrade_pyutils/${mod}\.py$"
           done
           forbid '/usr/libexec/'

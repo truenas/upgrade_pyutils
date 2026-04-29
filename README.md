@@ -59,11 +59,9 @@ src/
     io.py                      # atomic_write
     rootfs.py                  # ReadonlyRootfsManager
     db.py                      # FREENAS_DATABASE, query_config_table, query_table
-    gpu.py                     # get_gpus (sysfs-only, no pyudev)
 tests/
   test_io.py
   test_db.py
-  test_gpu.py
   integration/
     conftest.py                # file-backed zpool fixture
     test_rootfs.py             # ReadonlyRootfsManager against a real pool
@@ -116,7 +114,7 @@ Python 3.10, 3.11, and 3.13 to catch language-feature drift.
 ## Contributing
 
 - No third-party Python deps. Ever. Verify with
-  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.io, upgrade_pyutils.rootfs, upgrade_pyutils.db, upgrade_pyutils.gpu"`
+  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.io, upgrade_pyutils.rootfs, upgrade_pyutils.db"`
   — `-I` isolates from site-packages and will fail if a non-stdlib import slipped in.
 - Test under Python 3.10 before pushing. CI will catch regressions but local
   verification is faster.
