@@ -1,24 +1,61 @@
 #!/usr/bin/env python3
 
-# TrueNAS installs each version into its own boot environment (BE). This script
-# regenerates the initramfs for a *target* BE whose rootfs path is passed as the
-# `chroot` argument. The target BE is not necessarily the same as the environment
-# executing this script: it can be invoked from
-#   - a fresh-install ISO (host = installer environment, target = newly-extracted BE),
-#   - an upgrade running on an existing TrueNAS (host = old/currently-running BE,
-#     target = newly-extracted new BE), or
-#   - the running system itself for a runtime regen (host = target, `chroot` = "/").
-#
-# In the first two cases the host's Python interpreter executes the *target* BE's
-# script (no wrapping `chroot`), and the host and target may have different Python
-# interpreter versions or ABIs. The script and the sibling `upgrade_pyutils`
-# package are pure-Python and stdlib-only by design — they import nothing outside
-# the standard library, so they load cleanly under whichever Python the host
-# happens to provide. Both ship together at /usr/local/bin/ (the script and a
-# sibling `upgrade_pyutils/` directory). Python prepends the script's directory
-# to `sys.path[0]` automatically when run by path, so `upgrade_pyutils` resolves
-# to the copy that ships beside this script (i.e. the target BE's copy when
-# invoked cross-BE).
+# !!
+# !! STOP. READ THIS BEFORE YOU TOUCH THIS SCRIPT.
+# !!
+# !! This file runs across boot environment (BE) boundaries. During an upgrade,
+# !! the *currently running* (OLD) TrueNAS Python interpreter executes the
+# !! script and modules that live inside the *newly extracted* (NEW) BE's
+# !! filesystem. During a fresh install it's the install ISO's interpreter
+# !! against the new BE. The interpreter and the code are from DIFFERENT
+# !! TrueNAS versions and DIFFERENT Python builds.
+# !!
+# !! We learned this the hard way. Earlier versions of this script imported
+# !! `middlewared`, `truenas_os_pyutils`, and `truenas_pylibvirt` from the new
+# !! BE's dist-packages. Real upgrades blew up because:
+# !!   - new code used type-annotation syntax the old interpreter couldn't even
+# !!     parse (PEP-604 unions, PEP-695 generics, `match`, `Self`, etc.)
+# !!   - C extensions (`truenas_os`, `pyudev`, ...) were built against the new
+# !!     Python's ABI and failed to load — or worse, loaded and silently misbehaved
+# !!     under the old kernel.
+# !! The result was bricked upgrades with no UI to recover from. This is why
+# !! the script keeps shrinking and why anything BE-aware now lives in
+# !! middlewared and persists state to /data/subsystems/...
+# !!
+# !! THE RULES (do not break them, no exceptions):
+# !!
+# !! 1. STDLIB ONLY. The script and the sibling `upgrade_pyutils/` package may
+# !!    import NOTHING outside the Python standard library. Not `pydantic`, not
+# !!    `requests`, not `typing_extensions`, not `truenas_*`, not `middlewared`.
+# !!    If you reach for a third-party import, the work belongs in middleware,
+# !!    not here.
+# !!
+# !! 2. NO MIDDLEWARE LOGIC. Do not add functionality that reads or reconciles
+# !!    TrueNAS configuration. If you need to bake something into the initrd,
+# !!    have middlewared write it to a stable path under
+# !!    /data/subsystems/initramfs/ and add an initramfs-tools hook (shipped
+# !!    by the truenas-files package) that copies it into the initrd at
+# !!    `update-initramfs` time. That pattern is *the entire reason* this
+# !!    script exists in its current minimal form.
+# !!
+# !! 3. PYTHON 3.10 SYNTAX FLOOR. The oldest supported BE we may execute under
+# !!    runs Python 3.10. Do not use `tomllib`, `ExceptionGroup`, `except*`,
+# !!    `Self`/`Never`/`LiteralString`, PEP-695 generics, or `@typing.override`.
+# !!    `from __future__ import annotations` is mandatory so all annotations
+# !!    are strings at runtime.
+# !!
+# !! 4. NO C EXTENSIONS, EVER. Even transitively. Every C extension is one
+# !!    more chance to dlopen a symbol that doesn't exist on the host.
+# !!
+# !! 5. BLAST RADIUS. A bug here means the user's TrueNAS won't boot after
+# !!    upgrade. There is no recovery UI at that point — they're on a serial
+# !!    console or reinstalling. Treat every line you add like it has to run
+# !!    on the oldest supported version's Python against the newest version's
+# !!    filesystem, because that is literally what happens.
+# !!
+# !! If you are unsure whether something belongs here: it doesn't. Put it in
+# !! middleware.
+# !!
 from __future__ import annotations
 
 import argparse
