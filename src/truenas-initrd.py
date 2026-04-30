@@ -26,72 +26,10 @@ import logging
 import os
 import subprocess
 
-from upgrade_pyutils.db import FREENAS_DATABASE, query_config_table, query_table
-from upgrade_pyutils.io import atomic_write
+from upgrade_pyutils.db import FREENAS_DATABASE, query_config_table
 from upgrade_pyutils.rootfs import ReadonlyRootfsManager
 
 logger = logging.getLogger(__name__)
-
-
-def update_zfs_default(root: str, readonly_rootfs: ReadonlyRootfsManager) -> bool:
-    # Older versions wrote ZFS_INITRD_POST_MODPROBE_SLEEP=15 here when the boot pool was on
-    # USB, to let USB enumeration finish before zpool import. USB boot is no longer supported,
-    # so this function only strips the line from upgraded installs; can be removed once
-    # versions that wrote it are past EOL.
-    zfs_config_path = os.path.join(root, "etc/default/zfs")
-    with open(zfs_config_path) as f:
-        original_config = f.read()
-        lines = original_config.rstrip().split("\n")
-
-    zfs_var_name = "ZFS_INITRD_POST_MODPROBE_SLEEP"
-    lines = [line for line in lines if not line.startswith(f"{zfs_var_name}=")]
-
-    new_config = "\n".join(lines) + "\n"
-    if new_config != original_config:
-        readonly_rootfs.make_writeable()
-        with atomic_write(zfs_config_path, "w") as f:
-            f.write(new_config)
-
-        return True
-
-    return False
-
-
-def update_zfs_module_config(
-    root: str,
-    readonly_rootfs: ReadonlyRootfsManager,
-    database: str,
-) -> bool:
-    options = []
-    for tunable in query_table("system_tunable", database, "tun_"):
-        if tunable["type"] != "ZFS":
-            continue
-        if not tunable["enabled"]:
-            continue
-
-        options.append(f"{tunable['var']}={tunable['value']}")
-
-    config = f"options zfs {' '.join(options)}\n" if options else None
-
-    config_path = os.path.join(root, "etc", "modprobe.d", "zfs.conf")
-    try:
-        with open(config_path) as f:
-            existing_config = f.read()
-    except FileNotFoundError:
-        existing_config = None
-
-    if existing_config != config:
-        readonly_rootfs.make_writeable()
-
-        if config is None:
-            os.unlink(config_path)
-        else:
-            with atomic_write(config_path, "w", tmppath=os.path.join(root, "etc")) as f:
-                f.write(config)
-
-        return True
-
-    return False
 
 
 if __name__ == "__main__":
@@ -133,19 +71,12 @@ if __name__ == "__main__":
     args = p.parse_args()
     root = args.chroot[0]
 
-    update_required = False
+    rebuilt = False
     with ReadonlyRootfsManager(root) as readonly_rootfs:
         try:
             database = args.database or os.path.join(root, FREENAS_DATABASE[1:])
-
             adv_config = query_config_table("system_advanced", database, "adv_")
             debug_kernel = adv_config["debugkernel"]
-
-            update_required = any((
-                update_zfs_default(root, readonly_rootfs),
-                update_zfs_module_config(root, readonly_rootfs, database),
-            ))
-
             for kernel in os.listdir(f"{root}/boot"):
                 if not kernel.startswith("vmlinuz-"):
                     continue
@@ -155,16 +86,17 @@ if __name__ == "__main__":
                     continue
 
                 initrd_path = f"{root}/boot/initrd.img-{kernel_name}"
-                if args.force or update_required or not os.path.exists(initrd_path):
+                if args.force or not os.path.exists(initrd_path):
                     readonly_rootfs.make_writeable()
                     subprocess.run(
                         ["chroot", root, "update-initramfs", "-k", kernel_name, "-u"],
                         check=True,
                     )
+                    rebuilt = True
         except Exception:
             logger.error("Failed to update initramfs", exc_info=True)
             exit(2)
 
-    # Exit code 1 means the initramfs was updated and the caller should reboot before the changes take
-    # effect (e.g. after a database upload). Exit code 0 means nothing changed; exit code 2 means an error.
-    exit(int(update_required))
+    # Exit 1 if any initrd was (re)generated so the caller knows to reboot before
+    # changes take effect. Exit 0 if nothing was rebuilt; exit 2 on error.
+    exit(int(rebuilt))
