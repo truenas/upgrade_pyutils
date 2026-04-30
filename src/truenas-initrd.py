@@ -22,16 +22,11 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
-import json
 import logging
 import os
 import subprocess
-import textwrap
-from typing import Any
 
 from upgrade_pyutils.db import FREENAS_DATABASE, query_config_table, query_table
-from upgrade_pyutils.gpu import get_gpus
 from upgrade_pyutils.io import atomic_write
 from upgrade_pyutils.rootfs import ReadonlyRootfsManager
 
@@ -57,108 +52,6 @@ def update_zfs_default(root: str, readonly_rootfs: ReadonlyRootfsManager) -> boo
         with atomic_write(zfs_config_path, "w") as f:
             f.write(new_config)
 
-        return True
-
-    return False
-
-
-def get_current_gpu_pci_ids(database: str) -> list[str]:
-    adv_config = query_config_table("system_advanced", database, "adv_")
-    isolated = adv_config.get("isolated_gpu_pci_ids", [])
-    to_isolate = [gpu for gpu in get_gpus() if gpu["addr"]["pci_slot"] in isolated]
-    return [dev["pci_slot"] for gpu in to_isolate for dev in gpu["devices"]]
-
-
-def update_pci_module_files(root: str, config: dict[str, Any]) -> None:
-    # This method is (and must be) called when root is writeable
-
-    def get_path(p: str) -> str:
-        return os.path.join(root, p)
-
-    pci_slots = config["pci_ids"]
-    for path in map(
-        get_path, [
-            'etc/initramfs-tools/scripts/init-top/truenas_bind_vfio.sh',
-            "etc/initramfs-tools/modules",
-            "etc/modules",
-            "etc/modprobe.d/kvm.conf",
-            "etc/modprobe.d/nvidia.conf",
-        ]
-    ):
-        with contextlib.suppress(Exception):
-            os.unlink(path)
-
-    os.makedirs(get_path("etc/initramfs-tools"), exist_ok=True)
-    os.makedirs(get_path("etc/modprobe.d"), exist_ok=True)
-
-    if not pci_slots:
-        for path in map(
-            get_path, [
-                "etc/initramfs-tools/modules",
-                "etc/modules",
-            ]
-        ):
-            with atomic_write(path, "w", tmppath=get_path("etc")):
-                pass
-
-        return
-
-    for path in map(get_path, ["etc/initramfs-tools/modules", "etc/modules"]):
-        with atomic_write(path, "w", tmppath=get_path("etc")) as f:
-            f.write(textwrap.dedent("""\
-                vfio
-                vfio_iommu_type1
-                vfio_virqfd
-                vfio_pci
-            """))
-
-    with atomic_write(get_path("etc/modprobe.d/kvm.conf"), "w", tmppath=get_path("etc")) as f:
-        f.write("options kvm ignore_msrs=1\n")
-
-    with atomic_write(get_path("etc/modprobe.d/nvidia.conf"), "w", tmppath=get_path("etc")) as f:
-        f.write(textwrap.dedent("""\
-            softdep nouveau pre: vfio-pci
-            softdep nvidia pre: vfio-pci
-            softdep nvidia* pre: vfio-pci
-        """))
-
-    with atomic_write(
-        get_path("etc/initramfs-tools/scripts/init-top/truenas_bind_vfio.sh"), "w",
-        tmppath=get_path("etc"),
-        perms=0o755
-    ) as f:
-        f.write(textwrap.dedent(f"""\
-            #!/bin/sh
-            PREREQS=""
-            DEVS="{' '.join(pci_slots)}"
-            for DEV in $DEVS;
-              do echo "vfio-pci" > /sys/bus/pci/devices/$DEV/driver_override
-            done
-            modprobe -i vfio-pci
-        """))
-
-
-def update_pci_initramfs_config(
-    root: str,
-    readonly_rootfs: ReadonlyRootfsManager,
-    database: str,
-) -> bool:
-    initramfs_config_path = os.path.join(root, "boot/initramfs_config.json")
-    initramfs_config = {
-        "pci_ids": get_current_gpu_pci_ids(database),
-    }
-    original_config = None
-    if os.path.exists(initramfs_config_path):
-        with open(initramfs_config_path) as f:
-            original_config = json.loads(f.read())
-
-    if initramfs_config != original_config:
-        readonly_rootfs.make_writeable()
-
-        with atomic_write(initramfs_config_path, "w", tmppath=os.path.join(root, "boot")) as f:
-            f.write(json.dumps(initramfs_config))
-
-        update_pci_module_files(root, initramfs_config)
         return True
 
     return False
@@ -250,7 +143,6 @@ if __name__ == "__main__":
 
             update_required = any((
                 update_zfs_default(root, readonly_rootfs),
-                update_pci_initramfs_config(root, readonly_rootfs, database),
                 update_zfs_module_config(root, readonly_rootfs, database),
             ))
 
