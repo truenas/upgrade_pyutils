@@ -4,46 +4,69 @@ Self-contained home for `truenas-initrd.py` and the small handful of utility
 modules it needs. Both the script and the `upgrade_pyutils` package import
 nothing outside the Python standard library — by design.
 
-## Why this repo exists
+## !! READ THIS BEFORE YOU TOUCH ANYTHING IN THIS REPO !!
 
-`truenas-initrd.py` runs during TrueNAS installs and upgrades, and it is
-frequently invoked across boot environment (BE) boundaries: a *host* BE's
-Python interpreter executes the script that lives in a *target* BE's rootfs
-(fresh-install ISO → newly-extracted BE, or running BE → newly-extracted
-upgrade BE). The host and target may differ in:
+This code runs across boot environment (BE) boundaries. During a TrueNAS
+upgrade, the **currently running (OLD) BE's Python interpreter** executes
+`truenas-initrd.py` and the modules in `upgrade_pyutils/` that live inside
+the **newly extracted (NEW) BE's filesystem**. During a fresh install it's
+the install ISO's interpreter against the new BE. **The interpreter and the
+code are from different TrueNAS versions and different Python builds.**
 
-- **Python interpreter version** — modules pulled in from the target BE can
-  use language features the host's interpreter doesn't understand.
-- **C-extension ABI** — compiled `.so` files in the target's `dist-packages`
-  are built against the target's Python and may fail to load under the host's.
-- **Kernel features** — kernel-dependent C extensions can fail at call time
-  on an older host kernel.
+We learned this the hard way. Earlier versions of this script imported
+`middlewared`, `truenas_os_pyutils`, and `truenas_pylibvirt` out of the
+new BE's `dist-packages`. Real-world upgrades blew up because:
 
-Until now `truenas-initrd.py` (shipped under `middleware/`) lazy-imported
-`truenas_os_pyutils`, `truenas_pylibvirt`, and `middlewared` from the target
-BE's `dist-packages`. That arrangement is fragile: every transitively-imported
-C extension is a separate seam that can break at runtime — `truenas_os`,
-`pyudev`, and friends all sit in the import graph.
+- New code used type-annotation syntax the old interpreter couldn't even
+  *parse* — PEP-604 unions, PEP-695 generics, `match` statements, `Self`,
+  etc. The script failed at import time, mid-upgrade.
+- C extensions in the import graph (`truenas_os`, `pyudev`, and friends)
+  were compiled against the new Python's ABI and either failed to load
+  under the old interpreter — or worse, loaded and silently misbehaved
+  when they hit kernel features the old kernel didn't have.
+- Bricked upgrades. There is no recovery UI at that point. Users were
+  dropping to a serial console or reinstalling.
 
-This repo solves the problem by encapsulating every non-stdlib symbol the
-script needs into a sibling `upgrade_pyutils/` package and shipping them
-together. The script is invoked under whichever Python the host provides; both
-modules and script are pure Python and stdlib-only, so they load reliably.
+This repo exists so that never happens again. Everything in it is pure
+Python and stdlib-only, end to end. Anything BE-aware (config reconciliation,
+device enumeration, etc.) has been moved into middlewared, which writes
+state to stable paths under `/data/subsystems/...` that initramfs-tools
+hooks (shipped by the `truenas-files` package) read at `update-initramfs`
+time. **That pattern is the entire reason this script keeps shrinking.**
 
-## Constraints (do not violate)
+## !! Hard rules — do not break them !!
 
-- **Stdlib only.** No third-party Python packages — not `pyudev`, not
-  `truenas_os`, not `typing_extensions`, nothing. Adding any third-party
-  import breaks the cross-interpreter contract.
-- **Python 3.10 floor.** All code must parse and run under Python 3.10. In
-  particular avoid:
-  - `typing.Self`, `typing.Never`, `typing.assert_type`, `typing.LiteralString`,
-    `Required`/`NotRequired` (3.11+)
-  - `tomllib`, `ExceptionGroup`, `except*` (3.11+)
-  - PEP 695 generics (`type X = ...`, `class C[T]:`), `@typing.override` (3.12+)
+1. **STDLIB ONLY.** Not `pydantic`, not `requests`, not `typing_extensions`,
+   not `truenas_*`, not `middlewared`, not anything you `pip install`.
+   Adding *any* third-party import breaks the cross-interpreter contract.
+   If you find yourself wanting one, **the work belongs in middleware,
+   not here.**
+2. **NO MIDDLEWARE LOGIC.** Do not add functionality that reads or
+   reconciles TrueNAS configuration. If you need something baked into
+   the initrd, have middlewared write it to `/data/subsystems/initramfs/`
+   and add an initramfs-tools hook in the `truenas-files` package that
+   copies it into the initrd.
+3. **PYTHON 3.10 SYNTAX FLOOR.** All code must parse and run under Python
+   3.10. Forbidden:
+   - `typing.Self`, `typing.Never`, `typing.assert_type`,
+     `typing.LiteralString`, `Required`/`NotRequired` (3.11+)
+   - `tomllib`, `ExceptionGroup`, `except*` (3.11+)
+   - PEP-695 generics (`type X = ...`, `class C[T]:`),
+     `@typing.override` (3.12+)
+   - `match` statements only with extreme caution (3.10+, parses fine,
+     but if you can use `if/elif` instead, do)
 
-  Use `from __future__ import annotations` at the top of every module so
-  annotations are strings at runtime.
+   `from __future__ import annotations` is **mandatory** at the top of
+   every module so annotations are strings at runtime.
+4. **NO C EXTENSIONS, EVER. EVEN TRANSITIVELY.** Every compiled `.so` is
+   one more chance to dlopen a symbol that doesn't exist on the host.
+5. **BLAST RADIUS.** A bug here means the user's TrueNAS won't boot after
+   upgrade. Treat every line you add like it has to run on the oldest
+   supported version's Python against the newest version's filesystem —
+   because that is literally what happens.
+
+If you're unsure whether something belongs here: **it doesn't.** Put it
+in middleware.
 
 ## Layout
 
@@ -56,11 +79,9 @@ src/
   truenas-initrd.py            # entry point; bootstraps sibling upgrade_pyutils
   upgrade_pyutils/
     __init__.py                # empty
-    io.py                      # atomic_write
     rootfs.py                  # ReadonlyRootfsManager
     db.py                      # FREENAS_DATABASE, query_config_table, query_table
 tests/
-  test_io.py
   test_db.py
   integration/
     conftest.py                # file-backed zpool fixture
@@ -70,10 +91,10 @@ tests/
 ## How `upgrade_pyutils` is loaded
 
 When Python runs a script by path, it automatically prepends the script's own
-directory to `sys.path[0]`. That makes `from upgrade_pyutils.io import
-atomic_write` resolve to the package that ships next to `truenas-initrd.py`,
-with no `sys.path` manipulation in the script itself and no dependency on the
-host BE's `dist-packages`.
+directory to `sys.path[0]`. That makes `from upgrade_pyutils.db import
+query_config_table` resolve to the package that ships next to
+`truenas-initrd.py`, with no `sys.path` manipulation in the script itself and
+no dependency on the host BE's `dist-packages`.
 
 ## What the script does
 
@@ -81,15 +102,19 @@ host BE's `dist-packages`.
 path is passed as the `chroot` argument:
 
 1. Reads the TrueNAS configuration database (`/data/freenas-v1.db` inside the
-   target BE by default; `--database` overrides).
-2. Reconciles a few config files inside the target rootfs (`etc/default/zfs`,
-   `boot/initramfs_config.json`, the vfio-bind init-top script and module
-   files, `etc/modprobe.d/zfs.conf`) against the values in the database.
-3. For each `vmlinuz-*` kernel under `<root>/boot/`, runs `chroot <root>
-   update-initramfs -k <kernel> -u` if any config file changed, `--force` was
-   passed, or the corresponding `initrd.img-*` is missing.
+   target BE by default; `--database` overrides) for the `debugkernel` flag.
+2. For each `vmlinuz-*` kernel under `<root>/boot/`, runs `chroot <root>
+   update-initramfs -k <kernel> -u` if `--force` was passed or the
+   corresponding `initrd.img-*` is missing.
 
-Exits 0 if nothing changed, 1 if the initramfs was regenerated (caller
+All TrueNAS-specific data baked into the initrd (vfio PCI slot list, ZFS
+modprobe options, etc.) is written by middlewared to stable paths under
+`/data/subsystems/initramfs/`. Per-feature initramfs-tools hooks shipped by
+the `truenas-files` package read those paths at `update-initramfs` time and
+copy the contents into the initrd. This script is intentionally unaware of
+those features — it just orchestrates `update-initramfs`.
+
+Exits 0 if nothing was rebuilt, 1 if any initrd was regenerated (caller
 should reboot), 2 on error.
 
 ## Running tests locally
@@ -114,7 +139,7 @@ Python 3.10, 3.11, and 3.13 to catch language-feature drift.
 ## Contributing
 
 - No third-party Python deps. Ever. Verify with
-  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.io, upgrade_pyutils.rootfs, upgrade_pyutils.db"`
+  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.rootfs, upgrade_pyutils.db"`
   — `-I` isolates from site-packages and will fail if a non-stdlib import slipped in.
 - Test under Python 3.10 before pushing. CI will catch regressions but local
   verification is faster.

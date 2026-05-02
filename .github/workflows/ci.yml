@@ -63,12 +63,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
         run: pip install pytest
-      - name: Run unit tests as root
-        # `atomic_write` defaults uid=gid=0; that fchown call needs root, so
-        # pytest runs under sudo. `sudo` strips PATH (secure_path) so we
-        # re-inject the runner's PATH and use `python -m pytest` to avoid
-        # depending on the pytest console script being on it.
-        run: sudo env "PATH=$PATH" python -m pytest tests/ -m "not integration"
+      - name: Run unit tests
+        run: python -m pytest tests/ -m "not integration"
 
   package-build:
     runs-on: ubuntu-latest
@@ -111,7 +107,7 @@ jobs:
           }
 
           require '^-rwxr-xr-x .*\./usr/local/bin/truenas-initrd\.py$'
-          for mod in __init__ db io rootfs; do
+          for mod in __init__ db rootfs; do
             require "^-rw-r--r-- .*\./usr/local/bin/upgrade_pyutils/${mod}\.py$"
           done
           forbid '/usr/libexec/'
