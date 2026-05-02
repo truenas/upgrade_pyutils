@@ -72,7 +72,7 @@ in middleware.
 
 ```
 README.md
-.github/workflows/ci.yml       # ruff + mypy + py_compile matrix + pytest + zfs
+.github/workflows/ci.yml       # ruff + mypy + py_compile matrix + zfs
 mypy.ini
 pyproject.toml                 # ruff + pytest config (no install metadata yet)
 src/
@@ -80,9 +80,7 @@ src/
   upgrade_pyutils/
     __init__.py                # empty
     rootfs.py                  # ReadonlyRootfsManager
-    db.py                      # FREENAS_DATABASE, query_config_table, query_table
 tests/
-  test_db.py
   integration/
     conftest.py                # file-backed zpool fixture
     test_rootfs.py             # ReadonlyRootfsManager against a real pool
@@ -91,8 +89,8 @@ tests/
 ## How `upgrade_pyutils` is loaded
 
 When Python runs a script by path, it automatically prepends the script's own
-directory to `sys.path[0]`. That makes `from upgrade_pyutils.db import
-query_config_table` resolve to the package that ships next to
+directory to `sys.path[0]`. That makes `from upgrade_pyutils.rootfs import
+ReadonlyRootfsManager` resolve to the package that ships next to
 `truenas-initrd.py`, with no `sys.path` manipulation in the script itself and
 no dependency on the host BE's `dist-packages`.
 
@@ -101,18 +99,20 @@ no dependency on the host BE's `dist-packages`.
 `truenas-initrd.py` regenerates the initramfs of a *target* BE whose rootfs
 path is passed as the `chroot` argument:
 
-1. Reads the TrueNAS configuration database (`/data/freenas-v1.db` inside the
-   target BE by default; `--database` overrides) for the `debugkernel` flag.
+1. Reads `<root>/data/subsystems/initramfs/debug_kernel` (written by
+   middlewared) to decide whether to include the debug kernel. Missing →
+   default `False`.
 2. For each `vmlinuz-*` kernel under `<root>/boot/`, runs `chroot <root>
    update-initramfs -k <kernel> -u` if `--force` was passed or the
    corresponding `initrd.img-*` is missing.
 
 All TrueNAS-specific data baked into the initrd (vfio PCI slot list, ZFS
-modprobe options, etc.) is written by middlewared to stable paths under
-`/data/subsystems/initramfs/`. Per-feature initramfs-tools hooks shipped by
-the `truenas-files` package read those paths at `update-initramfs` time and
-copy the contents into the initrd. This script is intentionally unaware of
-those features — it just orchestrates `update-initramfs`.
+modprobe options, debug-kernel toggle, etc.) is written by middlewared to
+stable paths under `/data/subsystems/initramfs/`. Per-feature
+initramfs-tools hooks shipped by the `truenas-files` package read those
+paths at `update-initramfs` time and copy the contents into the initrd.
+This script is intentionally unaware of those features — it just
+orchestrates `update-initramfs`.
 
 Exits 0 if nothing was rebuilt, 1 if any initrd was regenerated (caller
 should reboot), 2 on error.
@@ -126,9 +126,6 @@ ruff check src/ tests/
 # Type check
 mypy --config-file mypy.ini
 
-# Unit tests (no ZFS required)
-pytest tests/ -m "not integration"
-
 # Integration (requires root + ZFS userspace; uses a file-backed zpool)
 sudo -E pytest tests/integration -m integration
 ```
@@ -139,7 +136,7 @@ Python 3.10, 3.11, and 3.13 to catch language-feature drift.
 ## Contributing
 
 - No third-party Python deps. Ever. Verify with
-  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.rootfs, upgrade_pyutils.db"`
+  `python3 -I -c "import sys; sys.path.insert(0, 'src'); import upgrade_pyutils.rootfs"`
   — `-I` isolates from site-packages and will fail if a non-stdlib import slipped in.
 - Test under Python 3.10 before pushing. CI will catch regressions but local
   verification is faster.

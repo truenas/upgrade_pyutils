@@ -63,10 +63,28 @@ import logging
 import os
 import subprocess
 
-from upgrade_pyutils.db import FREENAS_DATABASE, query_config_table
 from upgrade_pyutils.rootfs import ReadonlyRootfsManager
 
 logger = logging.getLogger(__name__)
+
+
+# Materialized by middlewared from system.advanced.config['debugkernel'].
+# Lives under /data so it survives BE upgrades (the installer rsyncs /data
+# into the new BE). Missing → default False (matches factory-db default).
+#
+# NOTE: no leading slash. This path is joined with `root` (the chroot arg) via
+# os.path.join — a leading "/" would make os.path.join discard `root` and
+# silently read the host's /data instead of the target BE's. During upgrades
+# that would read the OLD BE's flag, not the NEW BE's. Keep it relative.
+DEBUG_KERNEL_FLAG_PATH = "data/subsystems/initramfs/debug_kernel"
+
+
+def read_debug_kernel_flag(root: str) -> bool:
+    try:
+        with open(os.path.join(root, DEBUG_KERNEL_FLAG_PATH)) as f:
+            return f.read().strip() == "1"
+    except FileNotFoundError:
+        return False
 
 
 if __name__ == "__main__":
@@ -92,13 +110,6 @@ if __name__ == "__main__":
         ),
     )
     p.add_argument(
-        "--database", "-d", default="",
-        help=(
-            "Path to the TrueNAS configuration database to read configuration from. "
-            "Defaults to the database located inside the target BE's rootfs."
-        ),
-    )
-    p.add_argument(
         "--force", "-f", action="store_true",
         help=(
             "Regenerate the initramfs in the target BE for every kernel even if no "
@@ -108,12 +119,10 @@ if __name__ == "__main__":
     args = p.parse_args()
     root = args.chroot[0]
 
+    debug_kernel = read_debug_kernel_flag(root)
     rebuilt = False
     with ReadonlyRootfsManager(root) as readonly_rootfs:
         try:
-            database = args.database or os.path.join(root, FREENAS_DATABASE[1:])
-            adv_config = query_config_table("system_advanced", database, "adv_")
-            debug_kernel = adv_config["debugkernel"]
             for kernel in os.listdir(f"{root}/boot"):
                 if not kernel.startswith("vmlinuz-"):
                     continue
