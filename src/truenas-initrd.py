@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 # Materialized by middlewared from system.advanced.config['debugkernel'].
 # Lives under /data so it survives BE upgrades (the installer rsyncs /data
-# into the new BE). Missing → default False (matches factory-db default).
+# into the new BE). Missing -> default False (matches factory-db default).
 #
 # NOTE: no leading slash. This path is joined with `root` (the chroot arg) via
 # os.path.join — a leading "/" would make os.path.join discard `root` and
