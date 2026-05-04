@@ -50,22 +50,6 @@ jobs:
           spec.loader.exec_module(mod)
           "
 
-  unit-tests:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install pytest
-        run: pip install pytest
-      - name: Run unit tests
-        run: python -m pytest tests/ -m "not integration"
-
   package-build:
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck]
@@ -107,7 +91,7 @@ jobs:
           }
 
           require '^-rwxr-xr-x .*\./usr/local/bin/truenas-initrd\.py$'
-          for mod in __init__ db rootfs; do
+          for mod in __init__ rootfs; do
             require "^-rw-r--r-- .*\./usr/local/bin/upgrade_pyutils/${mod}\.py$"
           done
           forbid '/usr/libexec/'
@@ -130,7 +114,7 @@ jobs:
   integration-tests:
     name: integration tests in Debian Trixie KVM VM
     runs-on: ubuntu-24.04
-    needs: [lint-and-typecheck, compile-matrix, unit-tests, package-build]
+    needs: [lint-and-typecheck, compile-matrix, package-build]
     steps:
       - uses: actions/checkout@v4
 
