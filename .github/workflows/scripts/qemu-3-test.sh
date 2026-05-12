@@ -48,6 +48,7 @@ echo "=========================================="
 # correct paths and that the script's --help works end to end.
 dpkg -i --force-depends /tmp/truenas-initrd.deb
 /usr/local/bin/truenas-initrd.py --help | head -1
+/usr/local/bin/truenas-grub.py --help | head -1
 
 echo "=========================================="
 echo "Running integration tests"
