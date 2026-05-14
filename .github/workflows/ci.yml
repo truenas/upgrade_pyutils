@@ -45,9 +45,13 @@ jobs:
           import importlib.util
           import sys
           sys.path.insert(0, 'src')
-          spec = importlib.util.spec_from_file_location('truenas_initrd', 'src/truenas-initrd.py')
-          mod = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(mod)
+          for name, path in (
+              ('truenas_initrd', 'src/truenas-initrd.py'),
+              ('truenas_grub', 'src/truenas-grub.py'),
+          ):
+              spec = importlib.util.spec_from_file_location(name, path)
+              mod = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(mod)
           "
 
   package-build:
@@ -91,6 +95,7 @@ jobs:
           }
 
           require '^-rwxr-xr-x .*\./usr/local/bin/truenas-initrd\.py$'
+          require '^-rwxr-xr-x .*\./usr/local/bin/truenas-grub\.py$'
           for mod in __init__ rootfs; do
             require "^-rw-r--r-- .*\./usr/local/bin/upgrade_pyutils/${mod}\.py$"
           done
@@ -105,6 +110,7 @@ jobs:
         run: |
           sudo dpkg -i --force-depends truenas-initrd_*.deb
           /usr/local/bin/truenas-initrd.py --help | head -1
+          /usr/local/bin/truenas-grub.py --help | head -1
           sudo dpkg --purge truenas-initrd
       - uses: actions/upload-artifact@v4
         with:

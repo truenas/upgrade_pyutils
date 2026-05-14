@@ -1,3 +1,14 @@
+truenas-initrd (0.2.0-1) unstable; urgency=medium
+
+  * Add truenas-grub.py. Stdlib-only script that lays down
+    /etc/default/grub.d/truenas.cfg from a snapshot maintained on the live
+    system at /data/subsystems/grub/truenas.cfg. Replaces the old
+    middleware-importing script that ran via chroot during upgrades and was
+    vulnerable to the same cross-BE Python ABI / syntax mismatches that
+    motivated truenas-initrd.py's stdlib-only rewrite.
+
+ -- TrueNAS Engineering <dev@truenas.com>  Tue, 12 May 2026 00:00:00 +0000
+
 truenas-initrd (0.1.0-1) unstable; urgency=medium
 
   * Initial release. truenas-initrd.py and the stdlib-only upgrade_pyutils

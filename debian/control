@@ -14,14 +14,21 @@ Depends:
  initramfs-tools
 Replaces: truenas-files
 Breaks: truenas-files (<< 999)
-Description: TrueNAS initramfs regeneration script
- Reconciles boot-environment configuration files with the TrueNAS
- configuration database and regenerates the initramfs for each
- kernel installed in the target boot environment.
+Description: TrueNAS cross-BE upgrade helper scripts
+ Stdlib-only scripts that run across boot-environment (BE) boundaries
+ during TrueNAS install and upgrade:
  .
- The script and its sibling stdlib-only `upgrade_pyutils` helper
- package are installed under /usr/libexec/truenas-initrd/. The
- package deliberately ships no Python module under site-packages
- because the script is invoked across boot-environment boundaries
- during install and upgrade, where loading code from the host BE's
- site-packages would risk Python ABI / kernel-feature mismatches.
+   * truenas-initrd.py reconciles boot-environment configuration files
+     with the TrueNAS configuration database and regenerates the initramfs
+     for each kernel installed in the target BE.
+   * truenas-grub.py lays down /etc/default/grub.d/truenas.cfg in the
+     target BE from a pre-rendered snapshot at
+     /data/subsystems/grub/truenas.cfg that middlewared maintains on the
+     live system.
+ .
+ The scripts and the sibling `upgrade_pyutils` helper package ship
+ together. The package deliberately depends on nothing outside the
+ Python standard library because these scripts are invoked across
+ boot-environment boundaries during install and upgrade, where loading
+ third-party code from the host BE's site-packages would risk Python
+ ABI / kernel-feature mismatches.

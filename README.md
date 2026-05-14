@@ -1,7 +1,8 @@
 # upgrade_pyutils
 
-Self-contained home for `truenas-initrd.py` and the small handful of utility
-modules it needs. Both the script and the `upgrade_pyutils` package import
+Self-contained home for the cross-BE upgrade helper scripts
+(`truenas-initrd.py`, `truenas-grub.py`) and the small handful of utility
+modules they need. The scripts and the `upgrade_pyutils` package import
 nothing outside the Python standard library — by design.
 
 ## !! READ THIS BEFORE YOU TOUCH ANYTHING IN THIS REPO !!
@@ -77,6 +78,7 @@ mypy.ini
 pyproject.toml                 # ruff + pytest config (no install metadata yet)
 src/
   truenas-initrd.py            # entry point; bootstraps sibling upgrade_pyutils
+  truenas-grub.py              # entry point; lays down /etc/default/grub.d/truenas.cfg
   upgrade_pyutils/
     __init__.py                # empty
     rootfs.py                  # ReadonlyRootfsManager
@@ -94,10 +96,12 @@ ReadonlyRootfsManager` resolve to the package that ships next to
 `truenas-initrd.py`, with no `sys.path` manipulation in the script itself and
 no dependency on the host BE's `dist-packages`.
 
-## What the script does
+## What the scripts do
 
-`truenas-initrd.py` regenerates the initramfs of a *target* BE whose rootfs
-path is passed as the `chroot` argument:
+### `truenas-initrd.py`
+
+Regenerates the initramfs of a *target* BE whose rootfs path is passed as
+the `chroot` argument:
 
 1. Reads `<root>/data/subsystems/initramfs/debug_kernel` (written by
    middlewared) to decide whether to include the debug kernel. Missing →
@@ -116,6 +120,20 @@ orchestrates `update-initramfs`.
 
 Exits 0 if nothing was rebuilt, 1 if any initrd was regenerated (caller
 should reboot), 2 on error.
+
+### `truenas-grub.py`
+
+Lays down `/etc/default/grub.d/truenas.cfg` in the target BE from a
+pre-rendered snapshot at `<root>/data/subsystems/grub/truenas.cfg`. The
+live middleware materializes the snapshot whenever any input (system_advanced
+config, vendor, serial hardware, memory) changes, and `/data` is rsynced
+into the new BE during upgrades, so the snapshot is always present for
+upgrade paths.
+
+On fresh installs the snapshot is missing — the script writes a baked-in
+default grub config (no serial console, no kdump, no kernel extras), and
+middlewared overwrites it with the real bytes on first boot via its
+`system.ready` reconciliation handler.
 
 ## Running tests locally
 

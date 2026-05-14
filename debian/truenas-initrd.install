@@ -1,2 +1,3 @@
 src/truenas-initrd.py     usr/local/bin
+src/truenas-grub.py       usr/local/bin
 src/upgrade_pyutils/*.py  usr/local/bin/upgrade_pyutils
